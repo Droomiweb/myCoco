@@ -62,7 +62,7 @@ const playSound = (type) => {
 };
 
 // ==========================================
-// 2. MOBILE JOYSTICK COMPONENT
+// 2. MOBILE JOYSTICK (Fixed Touch Handling)
 // ==========================================
 function Joystick({ onMove }) {
   const wrapperRef = useRef(null);
@@ -70,7 +70,10 @@ function Joystick({ onMove }) {
   const [active, setActive] = useState(false);
   
   const handleTouch = (e) => {
+    // CRITICAL: Stop propagation so OrbitControls doesn't see this touch
+    e.stopPropagation(); 
     if(e.cancelable) e.preventDefault(); 
+    
     const touch = e.touches[0];
     const rect = wrapperRef.current.getBoundingClientRect();
     const centerX = rect.width / 2;
@@ -80,7 +83,7 @@ function Joystick({ onMove }) {
     let y = touch.clientY - rect.top - centerY;
     
     const distance = Math.sqrt(x * x + y * y);
-    const maxDist = rect.width / 2;
+    const maxDist = 40; 
     
     if (distance > maxDist) {
       const angle = Math.atan2(y, x);
@@ -89,12 +92,14 @@ function Joystick({ onMove }) {
     }
 
     stickRef.current.style.transform = `translate(${x}px, ${y}px)`;
+    
     const normX = x / maxDist;
     const normY = y / maxDist;
     onMove({ x: normX, y: normY }); 
   };
 
-  const reset = () => {
+  const reset = (e) => {
+    if(e) e.stopPropagation();
     setActive(false);
     stickRef.current.style.transform = `translate(0px, 0px)`;
     onMove({ x: 0, y: 0 });
@@ -102,28 +107,39 @@ function Joystick({ onMove }) {
 
   return (
     <div 
-      className="joystick-zone"
+      className="joystick-wrapper"
       ref={wrapperRef}
       onTouchStart={(e) => { setActive(true); handleTouch(e); }}
       onTouchMove={handleTouch}
       onTouchEnd={reset}
       onTouchCancel={reset}
     >
-      <div ref={stickRef} className={`stick ${active ? 'active' : ''}`} />
+      <div className="joystick-base">
+         <div ref={stickRef} className={`stick ${active ? 'active' : ''}`} />
+      </div>
+
       <style jsx>{`
-        .joystick-zone {
-            position: absolute; bottom: 40px; left: 40px;
-            width: 120px; height: 120px;
+        .joystick-wrapper {
+            position: absolute; 
+            bottom: 40px; 
+            left: 40px;
+            width: 140px; 
+            height: 140px;
+            z-index: 999; /* Highest priority */
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            touch-action: none; 
+        }
+        .joystick-base {
+            width: 90px; height: 90px;
             background: rgba(255, 255, 255, 0.2);
             border: 2px solid rgba(255, 255, 255, 0.5);
             border-radius: 50%;
-            touch-action: none; 
-            pointer-events: auto;
-            z-index: 50;
             display: flex; justify-content: center; align-items: center;
         }
         .stick {
-            width: 50px; height: 50px;
+            width: 40px; height: 40px;
             background: rgba(255, 255, 255, 0.8);
             border-radius: 50%;
             box-shadow: 0 4px 10px rgba(0,0,0,0.2);
@@ -136,7 +152,7 @@ function Joystick({ onMove }) {
 }
 
 // ==========================================
-// 3. CAMERA RIG (KEYBOARD + JOYSTICK)
+// 3. CAMERA RIG
 // ==========================================
 function CameraRig({ controlsRef, joyInput }) {
   const { camera } = useThree();
@@ -356,16 +372,14 @@ function GameWorld({ gameState, setGameState, level, addTime, setScore }) {
       <SoftShadows size={25} samples={10} />
       <fog attach="fog" args={['#aaccff', 10, 60]} /> 
 
-      {/* --- FLOOW WITH CLICK-TO-MOVE LOGIC --- */}
       <mesh 
         rotation={[-Math.PI / 2, 0, 0]} 
         position={[0, 0, 0]} 
         receiveShadow
         onPointerDown={(e) => {
-            // Logic: Only allow moving the dog manually if game is NOT in progress
             if (gameState === 'idle' || gameState === 'won' || gameState === 'lost') {
                 e.stopPropagation();
-                setDogTarget(e.point); // Move dog to clicked point
+                setDogTarget(e.point); 
                 playSound('pop');
             }
         }}
@@ -437,11 +451,20 @@ export default function Home() {
   const handleRestart = () => { setLevel(1); setScore(0); setGameState('hiding'); }
 
   return (
-    <main style={{ width: "100vw", height: "100vh", position: "relative", background: '#aaccff', overflow: 'hidden' }}>
+    // FIX 1: Use position fixed inset 0 to solve overflow issues on mobile
+    <main style={{ position: "fixed", inset: 0, background: '#aaccff', overflow: 'hidden' }}>
       <LoadingScreen started={loaded} />
 
       <Canvas shadows camera={{ position: [0, 10, 15], fov: 50 }}>
-         <OrbitControls ref={controlsRef} enableZoom={true} minDistance={5} maxDistance={40} maxPolarAngle={Math.PI/2.1} />
+         {/* FIX 2: Disable Zoom and Pan on Mobile to prevent Multitouch Conflict */}
+         <OrbitControls 
+            ref={controlsRef} 
+            enableZoom={false} 
+            enablePan={false}
+            minDistance={5} 
+            maxDistance={40} 
+            maxPolarAngle={Math.PI/2.1} 
+         />
          <CameraRig controlsRef={controlsRef} joyInput={joyInput} />
 
          <GameWorld 
@@ -471,7 +494,7 @@ export default function Home() {
             
             <div className="instructions">
                 <span className="pc-hint">⌨ <b>WASD</b> to Move</span>
-                <span className="mobile-hint">🕹 <b>Thumb</b> to Move</span>
+                <span className="mobile-hint">🕹 <b>Left</b>: Move &nbsp; 👆 <b>Right</b>: Look</span>
             </div>
 
             {gameState === 'idle' && <h1>🐕 Coco's Park</h1>}
@@ -481,9 +504,10 @@ export default function Home() {
             {gameState === 'lost' && <p className="status lose">COCO WINS! 😛</p>}
         </div>
 
+        {/* FIX 3: Buttons are now safely positioned relative to the container */}
         <div className="controls">
             {gameState === 'idle' && <button className="btn-primary" onClick={() => setGameState('hiding')}>Start Level 1 🙈</button>}
-            {gameState === 'seeking' && <button className="btn-secondary" onClick={() => setGameState('hint')}>Need a Hint? 🦴</button>}
+            {gameState === 'seeking' && <button className="btn-secondary" onClick={() => setGameState('hint')}>Hint? 🦴</button>}
             {gameState === 'won' && <button className="btn-primary" onClick={handleNextLevel}>Next Level ➡</button>}
             {gameState === 'lost' && <button className="btn-primary" onClick={handleRestart}>Try Again 🔄</button>}
         </div>
@@ -497,6 +521,7 @@ export default function Home() {
         .progress-bar { width: 200px; height: 10px; background: white; border-radius: 5px; margin: 10px auto; overflow: hidden; }
         .fill { width: 0%; height: 100%; background: #FF69B4; animation: fillBar 3.5s linear forwards; }
         @keyframes fillBar { to { width: 100%; } }
+        
         .dog-face { width: 80px; height: 80px; background: #E0C9A6; border-radius: 10px; position: relative; margin: 0 auto; animation: spinFace 3s infinite ease-in-out; }
         .ear { position: absolute; top: -10px; width: 20px; height: 30px; background: #8B5A2B; border-radius: 5px; }
         .ear.left { left: 0; } .ear.right { right: 0; }
@@ -506,10 +531,13 @@ export default function Home() {
         .tongue { position: absolute; bottom: 10px; left: 38px; width: 10px; height: 12px; background: #FF69B4; border-radius: 0 0 5px 5px; animation: pant 0.3s infinite; }
         @keyframes pant { 0%, 100% { height: 12px; } 50% { height: 15px; } }
         @keyframes spinFace { 0% { transform: rotate(0deg); } 25% { transform: rotate(-10deg); } 75% { transform: rotate(10deg); } 100% { transform: rotate(0deg); } }
+        
         .blindfold { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: black; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.5s; z-index: 20; }
         .blindfold.active { opacity: 1; pointer-events: auto; }
+        
         .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         .header { position: absolute; top: 20px; width: 100%; text-align: center; text-shadow: 2px 2px white; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        
         .score-board { background: rgba(255,255,255,0.9); padding: 5px 15px; border-radius: 20px; display: flex; gap: 20px; font-weight: bold; color: #555; box-shadow: 0 4px 10px rgba(0,0,0,0.1); pointer-events: auto; }
         .instructions { background: rgba(0,0,0,0.6); color: white; padding: 5px 15px; border-radius: 10px; font-size: 0.9rem; text-shadow: none; display: flex; gap: 15px; pointer-events: auto; }
         
@@ -518,7 +546,8 @@ export default function Home() {
         .lose { color: red; border: 2px solid red; } 
         .blink { color: #d35400; animation: blinker 1s linear infinite; }
         @keyframes blinker { 50% { opacity: 0.5; } }
-        .controls { position: absolute; bottom: 40px; right: 20px; width: auto; text-align: center; pointer-events: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+        
+        .controls { position: absolute; bottom: 40px; width: 100%; text-align: center; pointer-events: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; }
         .btn-primary { background: #ff9f43; border: 4px solid white; color: white; padding: 15px 40px; font-size: 1.5rem; border-radius: 50px; cursor: pointer; font-weight: bold; box-shadow: 0 5px 15px rgba(0,0,0,0.2); transition: transform 0.1s; }
         .btn-primary:active { transform: scale(0.95); }
         .btn-secondary { background: #54a0ff; border: 3px solid white; color: white; padding: 10px 25px; font-size: 1.2rem; border-radius: 30px; cursor: pointer; font-weight: bold; box-shadow: 0 5px 10px rgba(0,0,0,0.2); transition: transform 0.1s; }
@@ -526,14 +555,14 @@ export default function Home() {
         .emote { background: white; padding: 5px 10px; border-radius: 10px; font-weight: bold; font-size: 24px; border: 2px solid black; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); white-space: nowrap; }
         .bone-label { color: #FFD700; font-weight: bold; font-size: 20px; text-shadow: 1px 1px 2px black; }
 
-        /* Media Queries */
         @media (max-width: 768px) {
-            .controls { bottom: 180px; right: 20px; align-items: center; width: 100%; } 
+            /* Fix: Place buttons on the RIGHT side, above the thumb area */
+            .controls { bottom: 160px; right: 20px; width: auto; align-items: flex-end; } 
             .pc-hint { display: none; }
         }
         @media (min-width: 769px) {
             .mobile-hint { display: none; }
-            .joystick-zone { display: none; }
+            .joystick-wrapper { display: none; }
         }
       `}</style>
     </main>
